@@ -16,6 +16,7 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::str::FromStr;
+use tokio::fs as async_fs;
 
 mod error;
 pub use error::Error;
@@ -58,10 +59,17 @@ fn pwm_file_ro(chip: &PwmChip, pin: u32, name: &str) -> Result<File> {
 }
 
 /// Get the u32 value from the given entry
-fn pwm_file_parse<T: FromStr>(chip: &PwmChip, pin: u32, name: &str) -> Result<T> {
+async fn pwm_file_parse<T: FromStr>(chip: &PwmChip, pin: u32, name: &str) -> Result<T> {
     let mut s = String::with_capacity(10);
-    let mut f = pwm_file_ro(chip, pin, name)?;
-    f.read_to_string(&mut s)?;
+    //let mut f = pwm_file_ro(chip, pin, name)?;
+    //f.read_to_string(&mut s)?;
+
+    s = async_fs::read_to_string(format!(
+        "/sys/class/pwm/pwmchip{}/pwm{}/{}",
+        chip.number, pin, name
+    ))
+    .await?;
+
     match s.trim().parse::<T>() {
         Ok(r) => Ok(r),
         Err(_) => Err(Error::Unexpected(format!(
@@ -187,19 +195,19 @@ impl Pwm {
     }
 
     /// Query the state of enable for a given PWM pin
-    pub fn get_enabled(&self) -> Result<bool> {
-        pwm_file_parse::<u32>(&self.chip, self.number, "enable").map(|enable_state| {
-            match enable_state {
+    pub async fn get_enabled(&self) -> Result<bool> {
+        pwm_file_parse::<u32>(&self.chip, self.number, "enable")
+            .await
+            .map(|enable_state| match enable_state {
                 1 => true,
                 0 => false,
                 _ => panic!("enable != 1|0 should be unreachable"),
-            }
-        })
+            })
     }
 
     /// Get the currently configured duty_cycle in nanoseconds
-    pub fn get_duty_cycle_ns(&self) -> Result<u32> {
-        pwm_file_parse::<u32>(&self.chip, self.number, "duty_cycle")
+    pub async fn get_duty_cycle_ns(&self) -> Result<u32> {
+        pwm_file_parse::<u32>(&self.chip, self.number, "duty_cycle").await
     }
 
     /// Get the capture
@@ -223,21 +231,21 @@ impl Pwm {
     }
 
     /// Get the currently configured duty_cycle as percentage of period
-    pub fn get_duty_cycle(&self) -> Result<f32> {
-        Ok((self.get_duty_cycle_ns()? as f32) / (self.get_period_ns()? as f32))
+    pub async fn get_duty_cycle(&self) -> Result<f32> {
+        Ok((self.get_duty_cycle_ns().await? as f32) / (self.get_period_ns().await? as f32))
     }
 
     /// The active time of the PWM signal
     ///
     /// Value is as percentage of period.
-    pub fn set_duty_cycle(&self, duty_cycle: f32) -> Result<()> {
-        self.set_duty_cycle_ns((self.get_period_ns()? as f32 * duty_cycle).round() as u32)?;
+    pub async fn set_duty_cycle(&self, duty_cycle: f32) -> Result<()> {
+        self.set_duty_cycle_ns((self.get_period_ns().await? as f32 * duty_cycle).round() as u32)?;
         Ok(())
     }
 
     /// Get the currently configured period in nanoseconds
-    pub fn get_period_ns(&self) -> Result<u32> {
-        pwm_file_parse::<u32>(&self.chip, self.number, "period")
+    pub async fn get_period_ns(&self) -> Result<u32> {
+        pwm_file_parse::<u32>(&self.chip, self.number, "period").await
     }
 
     /// The period of the PWM signal in Nanoseconds
